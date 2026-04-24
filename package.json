@@ -1,0 +1,13 @@
+{
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "scripts": {
+    "user": "cd services/user && npx ts-node server.ts",
+    "message": "cd services/message && npx ts-node server.ts",
+    "feed": "cd services/feed && npx ts-node server.ts",
+    "search": "cd services/search && npx ts-node server.ts",
+    "gateway": "cd gateway && npx ts-node server.ts",
+    "dev:all": "concurrently \"npm run user\" \"npm run message\" \"npm run feed\" \"npm run search\" \"npm run gateway\""
+  }
+}
