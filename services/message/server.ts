@@ -1,50 +1,45 @@
-import express from "express";
-import mongoose from "mongoose";
-import { ApiResponse } from "../../shared/types";
+import { Server } from "socket.io"
+import { userSocketMap } from "../user/server";
+import { messageGraph } from "../feed/server";
 
-const app = express();
-app.use(express.json());
 
-mongoose.connect("mongodb://localhost:27017/social");
-
-type Message = {
-  from: string;
-  to: string;
-  text: string;
-  timestamp: Date;
-};
-
-const MessageSchema = new mongoose.Schema({
-  from: String,
-  to: String,
-  text: String,
-  timestamp: { type: Date, default: Date.now }
+const io = new Server(3000, {
+  cors: { origin: "*" }
 });
 
-const MessageModel = mongoose.model("Message", MessageSchema);
+const messages = io.of("/messages");
 
-// SEND MESSAGE
-app.post("/message", async (req, res) => {
-  const { from, to, text } = req.body;
+messages.on("connection", (socket) => {
+  socket.on("message:send", ({ from, to, text }) => {
+    const targetSocketId = userSocketMap.get(to);
+    const senderSocketId = userSocketMap.get(from);
 
-  if (!from || !to || !text) {
-    return res.json({ success: false, error: "Missing fields" });
-  }
+    if(!senderSocketId) return
+    if(!targetSocketId) return
 
-  const msg = await MessageModel.create({ from, to, text });
+    const message = {
+      from,
+      to,
+      text,
+      timestamp: Date.now()
+    };
 
-  res.json({ success: true, data: msg });
-});
+    // send to recipient ONLY
+    if (targetSocketId) {
+      io.to(targetSocketId).emit("message:new", message);
+    }
 
-// CHAT HISTORY (/message name)
-app.get("/chat/:name", async (req, res) => {
-  const name = req.params.name;
+    registerInteraction(senderSocketId, targetSocketId)
 
-  const chat = await MessageModel.find({
-    $or: [{ from: name }, { to: name }]
+    // also send back to sender (so they see it instantly)
+    socket.emit("message:new", message);
   });
-
-  res.json({ success: true, data: chat });
 });
 
-app.listen(4002, () => console.log("Message service running"));
+function registerInteraction(a: string, b: string) {
+  if (!messageGraph.has(a)) messageGraph.set(a, new Set());
+  if (!messageGraph.has(b)) messageGraph.set(b, new Set());
+
+  messageGraph.get(a)!.add(b);
+  messageGraph.get(b)!.add(a);
+}

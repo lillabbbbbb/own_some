@@ -8,6 +8,11 @@
     "feed": "cd services/feed && npx ts-node server.ts",
     "search": "cd services/search && npx ts-node server.ts",
     "gateway": "cd gateway && npx ts-node server.ts",
-    "dev:all": "concurrently \"npm run user\" \"npm run message\" \"npm run feed\" \"npm run search\" \"npm run gateway\""
+    "dev:all": "concurrently \"npm run user\" \"npm run message\" \"npm run feed\" \"npm run search\""
+  },
+  "dependencies": {
+    "crypto": "^1.0.1",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
   }
 }

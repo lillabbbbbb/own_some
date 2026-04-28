@@ -4,9 +4,27 @@ const io = new Server(4002, { cors: { origin: "*" } });
 
 const posts: any[] = [];
 
+// user -> Set of users they interacted with
+export const messageGraph = new Map<string, Set<string>>();
+
+function canUserSeePost(viewer: string, author: string) {
+  return messageGraph.get(viewer)?.has(author);
+}
+
 io.on("connection", (socket) => {
 
+  // -------------------------
+  // USER REGISTRATION FOR FEED
+  // -------------------------
+  socket.on("feed:register", (user: string) => {
+    socket.data.user = user;
+  });
+
+  // -------------------------
+  // POST CREATE
+  // -------------------------
   socket.on("post:create", (post) => {
+
     const fullPost = {
       ...post,
       id: posts.length,
@@ -16,10 +34,20 @@ io.on("connection", (socket) => {
 
     posts.unshift(fullPost);
 
-    // emit to feed
-    io.emit("post:new", fullPost);
+    const author = fullPost.user;
 
-    // ALSO index into search service (simple event propagation)
+    // broadcast ONLY to users who have interacted with author
+    for (const [clientSocketId, clientSocket] of io.sockets.sockets) {
+      const viewer = clientSocket.data.user;
+
+      if (!viewer) continue;
+
+      if (viewer === author || canUserSeePost(viewer, author)) {
+        clientSocket.emit("post:new", fullPost);
+      }
+    }
+
+    // still index for search service
     io.emit("index:post", fullPost);
   });
 

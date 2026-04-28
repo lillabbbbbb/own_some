@@ -1,18 +1,38 @@
-import express from "express";
+import { Server } from "socket.io";
 
-const app = express();
-app.use(express.json());
+const io = new Server(4004, { cors: { origin: "*" } });
 
-const data = ["hello", "feed post", "message system", "social app"];
+const postsIndex: any[] = [];
+const usersIndex: any[] = [];
 
-app.get("/search", (req, res) => {
-  const q = req.query.q as string;
+io.on("connection", (socket) => {
 
-  const results = data.filter(x =>
-    x.toLowerCase().includes(q?.toLowerCase() || "")
-  );
+  // INDEX POSTS
+  socket.on("index:post", (post) => {
+    postsIndex.push(post);
+  });
 
-  res.json({ success: true, data: results });
+  // INDEX USERS
+  socket.on("index:user", (user) => {
+    usersIndex.push(user);
+  });
+
+  // SEARCH
+  socket.on("search", (query: string) => {
+
+    const q = query.toLowerCase();
+
+    const users = usersIndex.filter(u =>
+      u.name.toLowerCase().includes(q)
+    );
+
+    const posts = postsIndex.filter(p =>
+      p.text.toLowerCase().includes(q)
+    );
+
+    socket.emit("search:result", {
+      users,
+      posts
+    });
+  });
 });
-
-app.listen(4004, () => console.log("Search service running"));
