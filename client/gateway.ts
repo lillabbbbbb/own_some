@@ -1,9 +1,4 @@
 import { io } from "socket.io-client";
+import { TypedSocket } from "../shared/typedSocket";
 
-export const sockets = {
-  users: io("http://localhost:4001/users"),
-  posts: io("http://localhost:4002/posts"),
-  messages: io("http://localhost:4003/messages"),
-  comments: io("http://localhost:4004/comments"),
-  search: io("http://localhost:4005/search")
-};
+export const socket = io("http://localhost:4000") as TypedSocket;

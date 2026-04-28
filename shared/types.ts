@@ -13,10 +13,28 @@ export type ChatMessage = {
   timestamp: number;
 };
 
-export type Message = {
-  sender: string;
+export type Post = {
+  id: string;
+  user: string;
   text: string;
-  isOwn: boolean;
+  timestamp: number;
+  comments: Comment[];
+};
+
+export type Comment = {
+  id: string;
+  user: string;
+  text: string;
+  timestamp: number;
+  replies: Comment[];
+};
+
+export type Message = {
+  id: string;
+  from: string;
+  to: string;
+  text: string;
+  timestamp: number;
 };
 
 
@@ -28,23 +46,15 @@ export interface BubbleOptions {
   showTail?: boolean;
 }
 
-export type Post = {
-  id: string | number;
-  user: string;
-  text: string;
-  timestamp?: number;
-  comments: Comment[];
-};
-
-export type Comment = {
-  id?: string | number;
-  user: string;
-  text: string;
-  timestamp: number;
-  replies: Comment[];
-};
-
 export type FrameOptions = {
   width?: number;
   align?: "left" | "right";
+};
+
+
+export type State = {
+  currentUser: string | null;
+  posts: Post[];
+  feedOpen: boolean;
+  feedIndex: number;
 };

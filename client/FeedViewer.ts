@@ -14,7 +14,7 @@ export default class FeedViewer {
   }
 
   addComment(postId: number, comment: any) {
-    const post = this.posts.find(p => p.id === postId);
+    const post = this.posts.find(p => Number(p.id) === Number(postId));
     if (post) {
       post.comments.push(comment);
     }

@@ -1,7 +1,7 @@
 import { BubbleOptions, type Message, type Align, Post, FrameOptions } from "../../shared/types"
 import chalk from "chalk";
 
-const termWidth = process.stdout.columns || 80;
+const getTermWidth = () => process.stdout.columns || 80;
 
 
 function wrapText(text: string, maxWidth: number): string[] {
@@ -11,7 +11,7 @@ function wrapText(text: string, maxWidth: number): string[] {
 
   for (const word of words) {
     if ((current + word).length > maxWidth) {
-      lines.push(current.trim());
+      if (current) lines.push(current.trim());
       current = word + " ";
     } else {
       current += word + " ";
@@ -23,13 +23,13 @@ function wrapText(text: string, maxWidth: number): string[] {
 }
 
 function createBubble(text: string, options: BubbleOptions = {}): string[] {
+  const termWidth = getTermWidth();
+
   const {
     align = "left",
     maxWidth = 40,
     padding = 1
   } = options;
-
-  const termWidth: number = process.stdout.columns || 80;
 
   const lines = wrapText(text, maxWidth);
   const contentWidth = Math.max(...lines.map(l => l.length));
@@ -44,12 +44,12 @@ function createBubble(text: string, options: BubbleOptions = {}): string[] {
     return `│${" ".repeat(padding)}${line}${space}${" ".repeat(padding)}│`;
   });
 
-  const bubble = [top, ...middle, bottom];
+  let bubble = [top, ...middle, bottom];
 
   if (align === "right") {
-    return bubble.map(line => {
-      const space = termWidth - line.length;
-      return " ".repeat(Math.max(space, 0)) + line;
+    bubble = bubble.map(line => {
+      const space = Math.max(0, termWidth - line.length);
+      return " ".repeat(space) + line;
     });
   }
 
@@ -66,35 +66,31 @@ function printBubble(text: string, isOwnMessage: boolean) {
 }
 
 export function printChat(messages: Message[]) {
-  let lastSender: string | null = null;
+  const termWidth = getTermWidth();
+  let lastFrom: string | null = null;
 
   for (const msg of messages) {
-    const isNewGroup = msg.sender !== lastSender;
+    const isNewGroup = msg.from !== lastFrom;
 
-    // 1. print sender name only if new group
     if (isNewGroup) {
       console.log("");
-      const label = msg.isOwn ? "You" : msg.sender
 
-      if (msg.isOwn) {
-        // RIGHT aligned name
-        const padded = label.padStart(termWidth);
-        console.log(chalk.blue(padded));
+      const label = msg.from;
+
+      if (msg.from === "You") {
+        console.log(chalk.blue(label.padStart(termWidth)));
       } else {
-        // LEFT aligned name
         console.log(chalk.magenta(label));
       }
     }
 
-    // 2. print bubble
     const bubble = createBubble(msg.text, {
-      align: msg.isOwn ? "right" : "left",
-      showTail: true,
+      align: msg.from === "You" ? "right" : "left",
       maxWidth: 50
     });
 
     bubble.forEach(line => console.log(line));
 
-    lastSender = msg.sender;
+    lastFrom = msg.from;
   }
 }

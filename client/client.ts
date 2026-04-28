@@ -1,20 +1,18 @@
 import readline from "readline";
 import crypto from "crypto";
 import process from "process";
-import { BubbleOptions, type Message, type Align, Post, Comment, FrameOptions } from "../shared/types"
-import chalk from "chalk"
-import FeedViewer from "./FeedViewer"
-import { sockets } from "./gateway";
-import { printChat } from "./formatters/chatFormatter";
+import chalk from "chalk";
+import { type Post, type Comment } from "../shared/types";
+import { io } from "socket.io-client";
+import { renderPost } from "./formatters/postFormatter";
+import { State } from "../shared/types"
+import { Events } from "../shared/events";
+import {printComments} from "../client/formatters/commentFormatter"
 
-let stdinAttached = false;
+const socket = io("http://localhost:4000");
 
-type State = {
-  currentUser: string | null;
-  posts: Post[];
-  feedOpen: boolean;
-  feedIndex: number;
-};
+let isRendering = false;
+let renderQueued = false;
 
 export const state: State = {
   currentUser: null,
@@ -22,96 +20,7 @@ export const state: State = {
   feedOpen: false,
   feedIndex: 0
 };
-const comments1: Comment[] = [
-  {
-    id: crypto.randomUUID(),
-    user: "Bob",
-    text: "Nice start!",
-    timestamp: Date.now(),
-    replies: [
-      {
-        id: crypto.randomUUID(),
-        user: "Alice",
-        text: "Thanks Bob!",
-        timestamp: Date.now(),
-        replies: []
-      },
-      {
-        id: crypto.randomUUID(),
-        user: "Charlie",
-        text: "Agreed 🔥",
-        timestamp: Date.now(),
-        replies: [
-          {
-            id: crypto.randomUUID(),
-            user: "Bob",
-            text: "This platform is promising",
-            timestamp: Date.now(),
-            replies: []
-          }
-        ]
-      }
-    ]
-  }
-];
 
-const comments2: Comment[] = [
-  {
-    id: crypto.randomUUID(),
-    user: "Alice",
-    text: "But less addictive 😄",
-    timestamp: Date.now(),
-    replies: [
-      {
-        id: crypto.randomUUID(),
-        user: "Bob",
-        text: "That's the goal",
-        timestamp: Date.now(),
-        replies: []
-      }
-    ]
-  },
-  {
-    id: crypto.randomUUID(),
-    user: "Charlie",
-    text: "Needs hashtags!",
-    timestamp: Date.now(),
-    replies: []
-  }
-];
-
-const comments3: Comment[] = [
-  {
-    id: crypto.randomUUID(),
-    user: "Alice",
-    text: "Feels like a terminal app from the future",
-    timestamp: Date.now(),
-    replies: [
-      {
-        id: crypto.randomUUID(),
-        user: "Charlie",
-        text: "Exactly what I was going for",
-        timestamp: Date.now(),
-        replies: [
-          {
-            id: crypto.randomUUID(),
-            user: "Bob",
-            text: "You guys nailed it",
-            timestamp: Date.now(),
-            replies: []
-          }
-        ]
-      }
-    ]
-  }
-];
-
-
-const testPosts = [
-  { id: crypto.randomUUID(), user: "Alice", text: "Welcome to my feed", timestamp: Date.now(), comments: comments1 },
-  { id: crypto.randomUUID(), user: "Bob", text: "This feels like Twitter CLI", timestamp: Date.now(), comments: comments2 },
-  { id: crypto.randomUUID(), user: "Charlie", text: "Arrow keys navigation is awesome", timestamp: Date.now(), comments: comments3 }
-]
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -119,39 +28,40 @@ const rl = readline.createInterface({
   prompt: "> "
 });
 
-const testMessages = [
-  { sender: "Alice", text: "Hey!", isOwn: false },
-  { sender: "Alice", text: "How are you?", isOwn: false },
-  { sender: "Alice", text: "You there?", isOwn: false },
-  { sender: "You", text: "Yeah I'm here", isOwn: true },
-  { sender: "You", text: "What's up?", isOwn: true },
-  { sender: "Bob", text: "Join the group", isOwn: false }
-];
+let stdinAttached = false;
 
-function getCurrentPost(): Post | null {
-  return state.posts[state.feedIndex] ?? null;
+function scheduleRender() {
+  if (renderQueued) return;
+
+  renderQueued = true;
+
+  setImmediate(() => {
+    renderQueued = false;
+    draw();
+  });
 }
+
+function renderCommentLine() {
+  process.stdout.write("\x1b[2K\r");
+  process.stdout.write(`💬 ${uiState.commentBuffer}`);
+}
+
 
 function parseInput(input: string): { cmd: string; args: string[] } {
   const regex = /"([^"]*)"|(\S+)/g;
-
   const tokens: string[] = [];
+
   let match;
-
-
   while ((match = regex.exec(input)) !== null) {
     const value = match[1] ?? match[2];
-
-    if (value !== undefined) {
-      tokens.push(value);
-    }
+    if (value) tokens.push(value);
   }
 
   const [cmd, ...args] = tokens;
 
   return {
     cmd: cmd || "",
-    args: args || []
+    args
   };
 }
 
@@ -160,93 +70,91 @@ export async function handleCommand(input: string) {
   const { cmd, args } = parseInput(input.trim());
 
   switch (cmd) {
+
+    /* ---------------- LOGIN ---------------- */
     case "/login": {
       const name = args[0];
       if (!name) return console.log("Missing name");
 
-      state.currentUser = name
-      console.log(`Welcome ${state.currentUser}`);
+      if (state.currentUser) return console.log(`Already logged in as ${state.currentUser}`)
 
-      sockets.users.emit("user:login", { name: state.currentUser });
+      state.currentUser = name;
 
+      socket.emit(Events.USER_LOGIN, { name });
+
+      console.log(`Welcome ${name}`);
       break;
     }
 
-    case "/messages": {
-
+    case "/logout": {
+      state.currentUser = null
+      main()
     }
 
+    /* ---------------- MESSAGE ---------------- */
     case "/send": {
       if (!state.currentUser) return console.log("Login first");
 
       const [to, ...msgParts] = args;
-      const text = msgParts.join(" ");
+      if (!args) return console.log(chalk.red("Incomplete command"))
 
-      sockets.messages.emit("message:send", {
+      // ✅ CHANGED: gateway-only emit
+      socket.emit(Events.MESSAGE_SEND, {
         from: state.currentUser,
         to,
-        text
+        text: msgParts.join(" ")
       });
 
       break;
     }
 
+    /* ---------------- POST ---------------- */
     case "/post": {
       if (!state.currentUser) return console.log("Login first");
 
-      const text = args.join(" ");
-
-      sockets.posts.emit("post:create", {
+      const newPost: Post = {
+        id: crypto.randomUUID(),
         user: state.currentUser,
-        text
-      });
+        text: args.join(" "),
+        timestamp: Date.now(),
+        comments: []
+      };
 
-      FIX THIS PART
-      state.posts.push()
+      // ✅ CHANGED: send to gateway instead of posts service
+      socket.emit(Events.POST_CREATE, newPost);
 
-      console.log("New post added")
+      // optimistic UI update
+      state.posts.push(newPost);
+
+      console.log("New post added");
       break;
     }
 
+    /* ---------------- COMMENT ---------------- */
     case "/comment": {
       if (!state.currentUser) return console.log("Login first");
 
       const [parentCommentId, ...textParts] = args;
-      const text = textParts.join(" ");
 
-      const post = getCurrentPost()
+      const post = getCurrentPost();
       if (!post) return console.log("No active post");
 
-
-      if (!parentCommentId) {
-        sockets.comments.emit("comment:add", {
-          postId: Number(post.id),
-          user: state.currentUser,
-          text
-        });
-      } else {
-        sockets.posts.emit("comment:reply", {
-          postId : Number(post.id),
+      socket.emit(
+        parentCommentId ? Events.COMMENT_REPLY : Events.COMMENT_ADD,
+        {
+          postId: post.id,
           parentCommentId,
           user: state.currentUser,
-          text,
-        });
-      }
+          text: textParts.join(" ")
+        }
+      );
 
       break;
     }
 
-    case "/search": {
-      const q = args.join(" ");
-      sockets.search.emit("search", q);
-      break;
-    }
-
+    /* ---------------- FEED ---------------- */
     case "/feed": {
-      if (!state.currentUser) {
-        console.log("Login first");
-        break;
-      }
+      if (!state.currentUser) return console.log("Login first");
 
       state.feedOpen = true;
       state.feedIndex = 0;
@@ -254,192 +162,134 @@ export async function handleCommand(input: string) {
       console.clear();
       console.log("📡 Live feed started...");
 
-      sockets.posts.emit("feed:subscribe", {
+      // ✅ CHANGED: gateway subscription
+      socket.emit(Events.FEED_SUBSCRIBE, {
         user: state.currentUser
       });
 
+      rl.pause();
       attachInputHandler();
       draw();
 
       break;
     }
 
+    /* ---------------- SEARCH ---------------- */
+    case "/search": {
+      // ✅ CHANGED: gateway-only search
+      socket.emit("search", args.join(" "));
+      break;
+    }
+
+    case "/exit":
+      process.exit(0);
+
     case "/guide":
       console.log(`
 /login <name>
 /send <user> <message>
 /post <text>
+/comment <text>
 /feed
 /search <query>
 /exit
       `);
       break;
 
-    case "/exit": {
-      process.exit(0)
-    }
-
     default:
-      console.log("Unknown command");
+      console.log(chalk.red("Unknown command"));
   }
 }
 
-const colors = [
-  chalk.cyan,
-  chalk.yellow,
-  chalk.magenta,
-  chalk.green,
-  chalk.blue,
-  chalk.red,
-  chalk.hex("#FFA500"), // orange
-  chalk.hex("#00CED1")  // teal
-];
 
-const userColorMap = new Map<string, any>();
+function attachSocketListeners() {
 
-function getUserColor(user: string) {
-  if (!userColorMap.has(user)) {
-    const colorFn = colors[userColorMap.size % colors.length];
-    userColorMap.set(user, colorFn);
-  }
-  return userColorMap.get(user);
-}
+  socket.on(Events.MESSAGE_NEW, (msg) => {
+    console.log(`💬 ${msg.from}: ${msg.text}`);
+  });
 
-function formatTime(timestamp: number) {
-  const date = new Date(timestamp);
-  return date.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit"
+  // ✅ feed initialization
+  socket.on(Events.FEED_INIT, (posts: Post[]) => {
+    state.posts = posts;
+    scheduleRender()
+  });
+
+  // ✅ new post broadcast
+  socket.on(Events.POST_CREATED, (post: Post) => {
+    state.posts.unshift(post);
+    scheduleRender()
+  });
+
+  // ✅ comment added
+  socket.on("comment:added", ({ postId, comment }) => {
+    const post = state.posts.find(p => p.id === postId);
+    if (!post) return;
+
+    post.comments.push(comment);
+    scheduleRender()
+  });
+
+  // ✅ nested comment reply
+  socket.on("comment:replied", ({ postId, parentCommentId, reply }) => {
+    const post = state.posts.find(p => p.id === postId);
+    if (!post) return;
+
+    const find = (comments: Comment[]): Comment | null => {
+      for (const c of comments) {
+        if (c.id === parentCommentId) return c;
+        const found = find(c.replies);
+        if (found) return found;
+      }
+      return null;
+    };
+
+    const parent = find(post.comments);
+    if (parent) parent.replies.push(reply);
+
+    scheduleRender()
   });
 }
 
-function printComments(comments: Comment[], depth = 0) {
-  const indent = "   ".repeat(depth);
 
-  comments.forEach((c, i) => {
-    const isLast = i === comments.length - 1;
-
-    const branch =
-      depth === 0
-        ? "💬 "
-        : isLast
-          ? "└─ "
-          : "├─ ";
-
-    const userColor = getUserColor(c.user);
-    const username = userColor.bold.italic(c.user);
-    const text = chalk.white(c.text);
-    const time = chalk.gray(`(${formatTime(c.timestamp)})`);
-
-    console.log(
-      indent +
-      branch +
-      username +
-      chalk.white(": ") +
-      text +
-      " " +
-      time
-    );
-
-    if (c.replies?.length) {
-      printComments(c.replies, depth + 1);
-    }
-  });
+function getCurrentPost(): Post | null {
+  return state.posts[state.feedIndex] ?? null;
 }
 
-// Start main program
-async function main() {
-  console.log("CLI started. Type /guide");
-  rl.prompt();
-
-  rl.on("line", async (input) => {
-    await handleCommand(input);
-    rl.prompt();
-  });
-}
-
-main();
-
-
-function wrap(text: string, width: number): string[] {
-  const words = text.split(" ");
-  const lines: string[] = [];
-  let line = "";
-
-  for (const word of words) {
-    if ((line + word).length > width) {
-      lines.push(line.trim());
-      line = word + " ";
-    } else {
-      line += word + " ";
-    }
-  }
-
-  if (line) lines.push(line.trim());
-  return lines;
-}
 
 function draw() {
+  if (!state.feedOpen) return;
+  if (isRendering) return;
+
+  isRendering = true;
+
+  try {
     console.clear();
 
     const post = getCurrentPost();
+
     if (!post) {
       console.log("No posts yet...");
       return;
     }
 
-    const frame = renderPost(post, state.feedIndex, state.posts.length);
-    frame.forEach(l => console.log(l));
+    renderPost(post).forEach(line => console.log(line));
 
+    console.log("\n💬 Comments:\n");
     printComments(post.comments);
 
-    console.log("\n⬅️ prev  ➡️ next  | q quit");
-  }
 
-  draw();
-
-function renderPost(post: Post, index: number, total: number) {
-  const width = 55;
-
-  const header = `${post.user} • ${post.timestamp ?? ""}  (${index + 1}/${total})`;
-
-  const lines = wrap(post.text, width);
-
-  const top = "┌" + "─".repeat(width + 2) + "┐";
-  const divider = "├" + "─".repeat(width + 2) + "┤";
-  const bottom = "└" + "─".repeat(width + 2) + "┘";
-
-  const headerLine = "│ " + header.padEnd(width, " ") + " │";
-
-  const body = lines.map(l =>
-    "│ " + l.padEnd(width, " ") + " │"
-  );
-
-  return [top, headerLine, divider, ...body, bottom];
-}
-
-let feedListenerAttached = false;
-
-export function startFeedViewer(posts: Post[]) {
-  const feed = new FeedViewer(posts);
-
-  if (!feedListenerAttached) {
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
-    process.stdin.setEncoding("utf8");
-
-    process.stdin.on("data", (key) => {
-      if (key === "q" || key === "\u0003") state.feedOpen = false;
-
-      if (key === "\u001b[D") feed.prev(); draw();
-      if (key === "\u001b[C") feed.next(); draw();
-
-      draw();
-    });
-
-    feedListenerAttached = true;
+    console.log("\n⬅️ prev  ➡️ next  |  c comment  |  q quit");
+  } finally {
+    isRendering = false;
   }
 }
+
+type InputMode = "feed" | "comment" | "idle";
+
+const uiState = {
+  mode: "feed" as InputMode,
+  commentBuffer: ""
+};
 
 function attachInputHandler() {
   if (stdinAttached) return;
@@ -449,23 +299,100 @@ function attachInputHandler() {
   process.stdin.setEncoding("utf8");
 
   process.stdin.on("data", (key) => {
-    if (!state.feedOpen) return;
 
-    if (key === "q" || key === "\u0003") {
+    // 🚪 EXIT FEED MODE
+    if (key === "q") {
       state.feedOpen = false;
-      process.exit(0);
+      uiState.mode = "idle";
+
+      rl.resume();
+      console.clear();
+      return;
     }
 
-    if (key === "\u001b[D") {
-      state.feedIndex = Math.max(0, state.feedIndex - 1);
-      draw();
+    // 💬 ENTER COMMENT MODE (press "c")
+    if (key === "c" && uiState.mode === "feed") {
+      uiState.mode = "comment";
+      uiState.commentBuffer = "";
+      console.log("\n💬 Comment mode (type, Enter to send, Esc to cancel)");
+      return;
     }
 
-    if (key === "\u001b[C") {
-      state.feedIndex = Math.min(state.posts.length - 1, state.feedIndex + 1);
-      draw();
+    // ❌ CANCEL COMMENT MODE (ESC)
+    if (key === "\u001b" && uiState.mode === "comment") {
+      uiState.mode = "feed";
+      uiState.commentBuffer = "";
+      scheduleRender()
+      return;
+    }
+
+    // 🟨 COMMENT INPUT MODE
+    if (uiState.mode === "comment") {
+
+      // ENTER → send comment
+      if (key === "\r") {
+        const text = uiState.commentBuffer.trim();
+
+        if (text.length > 0) {
+          const post = getCurrentPost();
+
+          if (post) {
+            socket.emit("comment:add", {
+              postId: post.id,
+              user: state.currentUser!,
+              text
+            });
+          }
+        }
+
+        uiState.commentBuffer = "";
+        uiState.mode = "feed";
+        scheduleRender()
+        return;
+      }
+
+      // BACKSPACE
+      if (key === "\u0008" || key === "\u007f") {
+        uiState.commentBuffer = uiState.commentBuffer.slice(0, -1);
+        process.stdout.write("\b \b");
+        return;
+      }
+
+      // NORMAL CHARACTER INPUT
+      uiState.commentBuffer += key;
+      renderCommentLine();
+      return;
+    }
+
+    // 📡 FEED NAVIGATION MODE
+    if (uiState.mode === "feed") {
+
+      if (key === "\u001b[D") {
+        state.feedIndex = Math.max(0, state.feedIndex - 1);
+        scheduleRender()
+      }
+
+      if (key === "\u001b[C") {
+        state.feedIndex = Math.min(state.posts.length - 1, state.feedIndex + 1);
+        scheduleRender()
+      }
     }
   });
 
   stdinAttached = true;
 }
+
+
+async function main() {
+  attachSocketListeners(); // IMPORTANT: register BEFORE usage
+
+  console.log("CLI started. Type /guide for more options");
+  rl.prompt();
+
+  rl.on("line", async (input) => {
+    await handleCommand(input);
+    rl.prompt();
+  });
+}
+
+main();
