@@ -7,7 +7,7 @@ import { io } from "socket.io-client";
 import { renderPost } from "./formatters/postFormatter";
 import { State } from "../shared/types"
 import { Events } from "../shared/events";
-import {printComments} from "../client/formatters/commentFormatter"
+import { printComments } from "../client/formatters/commentFormatter"
 
 const socket = io("http://localhost:4000");
 
@@ -20,6 +20,10 @@ export const state: State = {
   feedOpen: false,
   feedIndex: 0
 };
+
+socket.onAny((event, data) => {
+  console.log("📡 EVENT:", event, data);
+});
 
 
 const rl = readline.createInterface({
@@ -177,7 +181,7 @@ export async function handleCommand(input: string) {
     /* ---------------- SEARCH ---------------- */
     case "/search": {
       // ✅ CHANGED: gateway-only search
-      socket.emit("search", args.join(" "));
+      socket.emit(Events.SEARCH, args.join(" "));
       break;
     }
 
@@ -208,6 +212,10 @@ function attachSocketListeners() {
     console.log(`💬 ${msg.from}: ${msg.text}`);
   });
 
+  socket.on(Events.SEARCH_RESULTS, () => {
+    
+  })
+
   // ✅ feed initialization
   socket.on(Events.FEED_INIT, (posts: Post[]) => {
     state.posts = posts;
@@ -221,7 +229,7 @@ function attachSocketListeners() {
   });
 
   // ✅ comment added
-  socket.on("comment:added", ({ postId, comment }) => {
+  socket.on(Events.COMMENT_ADDED, ({ postId, comment }) => {
     const post = state.posts.find(p => p.id === postId);
     if (!post) return;
 
@@ -230,7 +238,7 @@ function attachSocketListeners() {
   });
 
   // ✅ nested comment reply
-  socket.on("comment:replied", ({ postId, parentCommentId, reply }) => {
+  socket.on(Events.COMMENT_REPLIED, ({ postId, parentCommentId, reply }) => {
     const post = state.posts.find(p => p.id === postId);
     if (!post) return;
 
@@ -337,11 +345,16 @@ function attachInputHandler() {
           const post = getCurrentPost();
 
           if (post) {
-            socket.emit("comment:add", {
-              postId: post.id,
+            const optimisticComment = {
+              id: crypto.randomUUID(),
               user: state.currentUser!,
-              text
-            });
+              text,
+              timestamp: Date.now(),
+              replies: []
+            };
+
+            post.comments.push(optimisticComment);
+            scheduleRender();
           }
         }
 
