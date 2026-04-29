@@ -58,3 +58,7 @@ export type State = {
   feedOpen: boolean;
   feedIndex: number;
 };
+
+export type SearchResult = {
+  username: string
+}

@@ -12,7 +12,7 @@ export interface EventMap {
 
   // 🔍 SEARCH
   [Events.SEARCH]: { query: string };
-  [Events.SEARCH_RESULTS]: { query: string; results: Post[] };
+  [Events.SEARCH_RESULTS]: { query: string; user: string, posts: Post[], comments: Comment[] };
 
   // 📡 FEED
   [Events.FEED_SUBSCRIBE]: { user: string };

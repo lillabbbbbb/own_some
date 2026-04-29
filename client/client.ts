@@ -78,9 +78,8 @@ export async function handleCommand(input: string) {
     /* ---------------- LOGIN ---------------- */
     case "/login": {
       const name = args[0];
-      if (!name) return console.log("Missing name");
-
       if (state.currentUser) return console.log(`Already logged in as ${state.currentUser}`)
+      if (!name) return console.log(chalk.red("Missing name"));
 
       state.currentUser = name;
 
@@ -92,6 +91,7 @@ export async function handleCommand(input: string) {
 
     case "/logout": {
       state.currentUser = null
+      console.log(chalk.gray("You logged out successfully."))
       main()
     }
 
@@ -100,13 +100,14 @@ export async function handleCommand(input: string) {
       if (!state.currentUser) return console.log("Login first");
 
       const [to, ...msgParts] = args;
-      if (!args) return console.log(chalk.red("Incomplete command"))
+      const text = msgParts.join(" ")
+      if (text == "") return console.log(chalk.red("Message content missing"))
 
       // ✅ CHANGED: gateway-only emit
       socket.emit(Events.MESSAGE_SEND, {
         from: state.currentUser,
         to,
-        text: msgParts.join(" ")
+        text
       });
 
       break;
@@ -180,8 +181,9 @@ export async function handleCommand(input: string) {
 
     /* ---------------- SEARCH ---------------- */
     case "/search": {
-      // ✅ CHANGED: gateway-only search
-      socket.emit(Events.SEARCH, args.join(" "));
+      const query = args.join(" ")
+      if(!query) return console.log(chalk.red("Search keyword missing"))
+      socket.emit(Events.SEARCH, query);
       break;
     }
 
@@ -191,6 +193,7 @@ export async function handleCommand(input: string) {
     case "/guide":
       console.log(`
 /login <name>
+/logout
 /send <user> <message>
 /post <text>
 /comment <text>
@@ -212,9 +215,19 @@ function attachSocketListeners() {
     console.log(`💬 ${msg.from}: ${msg.text}`);
   });
 
-  socket.on(Events.SEARCH_RESULTS, () => {
-    
-  })
+  socket.on(Events.SEARCH_RESULTS, (payload) => {
+    const results = payload?.results;
+
+    if (!Array.isArray(results) || results.length === 0) {
+      return console.log("No users found");
+    }
+
+    console.log(`Search results for "${payload.query}":`);
+
+    results.forEach((user: string) => {
+      console.log(`- ${user}`);
+    });
+  });
 
   // ✅ feed initialization
   socket.on(Events.FEED_INIT, (posts: Post[]) => {
