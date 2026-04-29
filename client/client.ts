@@ -17,6 +17,7 @@ let renderQueued = false;
 export const state: State = {
   currentUser: null,
   posts: [],
+  comments: [],
   feedOpen: false,
   feedIndex: 0
 };
@@ -367,6 +368,7 @@ function attachInputHandler() {
             };
 
             post.comments.push(optimisticComment);
+            socket.emit(Events.COMMENT_ADD, optimisticComment);
             scheduleRender();
           }
         }

@@ -55,6 +55,7 @@ export type FrameOptions = {
 export type State = {
   currentUser: string | null;
   posts: Post[];
+  comments: Comment[];
   feedOpen: boolean;
   feedIndex: number;
 };
